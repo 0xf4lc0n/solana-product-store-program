@@ -1,0 +1,13 @@
+[package]
+name = "price_store"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "hello_world"
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+borsh = "0.9.3"
+solana-program = "=1.17.25"
+thiserror = "1.0.59"
