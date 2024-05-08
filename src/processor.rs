@@ -26,8 +26,8 @@ pub fn process_instruction(
     let instruction = ProductInstruction::unpack(instruction_data)?;
 
     match instruction {
-        ProductInstruction::AddProduct { name, price } => {
-            add_product(program_id, accounts, name, price)
+        ProductInstruction::AddProduct { name, price, id } => {
+            add_product(program_id, accounts, id, name, price)
         }
         ProductInstruction::UpdateProduct { name } => update_product(program_id, accounts, name),
         ProductInstruction::UpdatePrice { price } => add_price(program_id, accounts, price),
@@ -37,10 +37,12 @@ pub fn process_instruction(
 pub fn add_product(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
+    id: u64,
     name: String,
     price: f64,
 ) -> ProgramResult {
     msg!("Adding product...");
+    msg!("Id: {}", id);
     msg!("Name: {}", name);
     msg!("Price: {:.2}", price);
 
@@ -57,7 +59,7 @@ pub fn add_product(
     }
 
     let (pda, bump_seed) = Pubkey::find_program_address(
-        &[initializer.key.as_ref(), name.as_bytes().as_ref()],
+        &[initializer.key.as_ref(), id.to_be_bytes().as_ref()],
         program_id,
     );
     if pda != *pda_product.key {
@@ -97,7 +99,7 @@ pub fn add_product(
         ],
         &[&[
             initializer.key.as_ref(),
-            name.as_bytes().as_ref(),
+            id.to_be_bytes().as_ref(),
             &[bump_seed],
         ]],
     )?;
@@ -117,6 +119,7 @@ pub fn add_product(
 
     product_account_data.discriminator = ProductAccountState::DISCRIMINATOR.to_string();
     product_account_data.seller = *initializer.key;
+    product_account_data.id = id;
     product_account_data.name = name;
     product_account_data.price = price;
     product_account_data.is_initialized = true;
@@ -183,6 +186,66 @@ pub fn update_product(
 ) -> ProgramResult {
     msg!("Updating product...");
     msg!("Name: {}", name);
+
+    let account_info_iter = &mut accounts.iter();
+
+    let seller = next_account_info(account_info_iter)?;
+    let pda_product = next_account_info(account_info_iter)?;
+
+    if pda_product.owner != program_id {
+        return Err(ProgramError::IllegalOwner);
+    }
+
+    if !seller.is_signer {
+        msg!("Missing required signature");
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+
+    msg!("Unpacking state account");
+    let mut account_data =
+        try_from_slice_unchecked::<ProductAccountState>(&pda_product.data.borrow()).unwrap();
+
+    msg!("Product name: {}", account_data.name);
+
+    let (pda, _bump_seed) = Pubkey::find_program_address(
+        &[seller.key.as_ref(), account_data.id.to_be_bytes().as_ref()],
+        program_id,
+    );
+
+    if pda != *pda_product.key {
+        msg!("Invalid seeds for PDA");
+        // TODO: Custom error
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    msg!("Checking if movie account is initialized");
+    if !account_data.is_initialized() {
+        msg!("Account is not initialized");
+        return Err(ProgramError::UninitializedAccount);
+    }
+
+    if name.len() == 0 {
+        msg!("Name cannot be empty");
+        // TODO: add custom error
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    if ProductAccountState::get_account_size(name.clone()) > 1000 {
+        msg!("Data length is larger than 1000 bytes");
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    msg!("Product before update:");
+    msg!("Name: {}", account_data.name);
+
+    account_data.name = name;
+
+    msg!("Product after update:");
+    msg!("Name: {}", account_data.name);
+
+    msg!("Serializing account");
+    account_data.serialize(&mut &mut pda_product.data.borrow_mut()[..])?;
+    msg!("State account serialized");
 
     Ok(())
 }

@@ -2,13 +2,14 @@ use borsh::BorshDeserialize;
 use solana_program::program_error::ProgramError;
 
 pub enum ProductInstruction {
-    AddProduct { name: String, price: f64 },
+    AddProduct { id: u64, name: String, price: f64 },
     UpdateProduct { name: String },
     UpdatePrice { price: f64 },
 }
 
 #[derive(BorshDeserialize)]
 struct AddProductPayload {
+    id: u64,
     name: String,
     price: f64,
 }
@@ -33,6 +34,7 @@ impl ProductInstruction {
             0 => {
                 let payload = AddProductPayload::try_from_slice(rest).unwrap();
                 Self::AddProduct {
+                    id: payload.id,
                     name: payload.name,
                     price: payload.price,
                 }

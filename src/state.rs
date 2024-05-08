@@ -9,6 +9,7 @@ pub struct ProductAccountState {
     pub discriminator: String,
     pub is_initialized: bool,
     pub seller: Pubkey,
+    pub id: u64,
     pub name: String,
     pub price: f64,
 }
