@@ -27,6 +27,7 @@ pub struct ProductPrice {
     pub is_initialized: bool,
     pub product: Pubkey,
     pub price: f64,
+    //pub timestamp: u64,
 }
 
 impl Sealed for ProductAccountState {}

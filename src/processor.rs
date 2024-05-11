@@ -2,6 +2,7 @@ use borsh::BorshSerialize;
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
     borsh0_9::try_from_slice_unchecked,
+    clock::Clock,
     entrypoint::ProgramResult,
     msg,
     program::invoke_signed,
@@ -312,16 +313,63 @@ pub fn add_price(program_id: &Pubkey, accounts: &[AccountInfo], price: f64) -> P
         return Err(ProgramError::AccountAlreadyInitialized);
     }
 
+    let clock = Clock::get()?;
+    let current_timestamp = clock.unix_timestamp as u64;
+
     price_data.discriminator = ProductPrice::DISCRIMINATOR.to_string();
     price_data.price = price;
     price_data.product = *pda_product.key;
     price_data.is_initialized = true;
+    //price_data.timestamp = current_timestamp;
 
     price_data.serialize(&mut &mut pda_price.data.borrow_mut()[..])?;
 
     msg!("Price count: {}", counter_data.counter);
     counter_data.counter += 1;
     counter_data.serialize(&mut &mut pda_counter.data.borrow_mut()[..])?;
+
+    msg!("Updating price in the Product Account");
+    msg!("Unpacking state account");
+    let mut account_data =
+        try_from_slice_unchecked::<ProductAccountState>(&pda_product.data.borrow()).unwrap();
+
+    let (pda, _bump_seed) = Pubkey::find_program_address(
+        &[
+            product_owner.key.as_ref(),
+            account_data.id.to_be_bytes().as_ref(),
+        ],
+        program_id,
+    );
+
+    if pda != *pda_product.key {
+        msg!("Invalid seeds for Product PDA");
+        // TODO: Custom error
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    msg!("Checking if Product Account is initialized");
+    if !account_data.is_initialized() {
+        msg!("Account is not initialized");
+        return Err(ProgramError::UninitializedAccount);
+    }
+
+    if price <= 0.0 {
+        msg!("Price cannot be lower than 0.0");
+        // TODO: add custom error
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    msg!("Product before update:");
+    msg!("Price: {}", account_data.price);
+
+    account_data.price = price;
+
+    msg!("Product after update:");
+    msg!("Price: {}", account_data.price);
+
+    msg!("Serializing account");
+    account_data.serialize(&mut &mut pda_product.data.borrow_mut()[..])?;
+    msg!("State account serialized");
 
     Ok(())
 }
