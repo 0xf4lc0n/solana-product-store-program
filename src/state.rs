@@ -15,6 +15,13 @@ pub struct ProductAccountState {
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
+pub struct ProductCounter {
+    pub discriminator: String,
+    pub is_initialized: bool,
+    pub counter: u64,
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
 pub struct ProductPriceCounter {
     pub discriminator: String,
     pub is_initialized: bool,
@@ -27,12 +34,18 @@ pub struct ProductPrice {
     pub is_initialized: bool,
     pub product: Pubkey,
     pub price: f64,
-    //pub timestamp: u64,
+    pub timestamp: String,
 }
 
 impl Sealed for ProductAccountState {}
 
 impl IsInitialized for ProductAccountState {
+    fn is_initialized(&self) -> bool {
+        self.is_initialized
+    }
+}
+
+impl IsInitialized for ProductCounter {
     fn is_initialized(&self) -> bool {
         self.is_initialized
     }
@@ -58,6 +71,11 @@ impl ProductAccountState {
     }
 }
 
+impl ProductCounter {
+    pub const DISCRIMINATOR: &'static str = "product_counter";
+    pub const SIZE: usize = (4 + Self::DISCRIMINATOR.len()) + 1 + 8;
+}
+
 impl ProductPriceCounter {
     pub const DISCRIMINATOR: &'static str = "counter";
 
@@ -67,5 +85,9 @@ impl ProductPriceCounter {
 impl ProductPrice {
     pub const DISCRIMINATOR: &'static str = "price";
 
-    pub const SIZE: usize = (4 + Self::DISCRIMINATOR.len() + 1 + 32 + 8);
+    //pub const SIZE: usize = (4 + Self::DISCRIMINATOR.len() + 1 + 32 + 8 + 8);
+
+    pub fn get_account_size(name: String) -> usize {
+        (4 + Self::DISCRIMINATOR.len() + 1 + 32 + 8 + 4 + name.len())
+    }
 }

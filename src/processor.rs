@@ -27,11 +27,16 @@ pub fn process_instruction(
     let instruction = ProductInstruction::unpack(instruction_data)?;
 
     match instruction {
-        ProductInstruction::AddProduct { name, price, id } => {
-            add_product(program_id, accounts, id, name, price)
-        }
+        ProductInstruction::AddProduct {
+            name,
+            price,
+            id,
+            timestamp,
+        } => add_product(program_id, accounts, id, name, price, timestamp),
         ProductInstruction::UpdateProduct { name } => update_product(program_id, accounts, name),
-        ProductInstruction::UpdatePrice { price } => add_price(program_id, accounts, price),
+        ProductInstruction::UpdatePrice { price, timestamp } => {
+            add_price(program_id, accounts, price, timestamp)
+        }
     }
 }
 
@@ -41,11 +46,13 @@ pub fn add_product(
     id: u64,
     name: String,
     price: f64,
+    timestamp: String,
 ) -> ProgramResult {
     msg!("Adding product...");
     msg!("Id: {}", id);
     msg!("Name: {}", name);
     msg!("Price: {:.2}", price);
+    msg!("Timestamp: {}", timestamp);
 
     let account_info_iter = &mut accounts.iter();
     let initializer = next_account_info(account_info_iter)?;
@@ -175,7 +182,7 @@ pub fn add_product(
     counter_data.serialize(&mut &mut pda_counter.data.borrow_mut()[..])?;
 
     // Adding price
-    add_price(program_id, accounts, price)?;
+    add_price(program_id, accounts, price, timestamp)?;
 
     Ok(())
 }
@@ -251,7 +258,12 @@ pub fn update_product(
     Ok(())
 }
 
-pub fn add_price(program_id: &Pubkey, accounts: &[AccountInfo], price: f64) -> ProgramResult {
+pub fn add_price(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    price: f64,
+    timestamp: String,
+) -> ProgramResult {
     msg!("Adding price...");
     let account_info_inter = &mut accounts.iter();
 
@@ -264,7 +276,7 @@ pub fn add_price(program_id: &Pubkey, accounts: &[AccountInfo], price: f64) -> P
     let mut counter_data =
         try_from_slice_unchecked::<ProductPriceCounter>(&pda_counter.data.borrow()).unwrap();
 
-    let account_len = ProductPrice::SIZE;
+    let account_len = ProductPrice::get_account_size(timestamp.clone());
 
     let rent = Rent::get()?;
     let rent_lamports = rent.minimum_balance(account_len);
@@ -313,14 +325,11 @@ pub fn add_price(program_id: &Pubkey, accounts: &[AccountInfo], price: f64) -> P
         return Err(ProgramError::AccountAlreadyInitialized);
     }
 
-    let clock = Clock::get()?;
-    let current_timestamp = clock.unix_timestamp as u64;
-
     price_data.discriminator = ProductPrice::DISCRIMINATOR.to_string();
     price_data.price = price;
     price_data.product = *pda_product.key;
     price_data.is_initialized = true;
-    //price_data.timestamp = current_timestamp;
+    price_data.timestamp = timestamp;
 
     price_data.serialize(&mut &mut pda_price.data.borrow_mut()[..])?;
 
