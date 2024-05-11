@@ -7,9 +7,9 @@ use crate::processor;
 
 entrypoint!(process_instruction);
 
-pub fn process_instruction(
+pub fn process_instruction<'a>(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &'a [AccountInfo<'a>],
     instruction_data: &[u8],
 ) -> ProgramResult {
     msg!(

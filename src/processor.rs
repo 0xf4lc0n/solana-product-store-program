@@ -2,7 +2,6 @@ use borsh::BorshSerialize;
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
     borsh0_9::try_from_slice_unchecked,
-    clock::Clock,
     entrypoint::ProgramResult,
     msg,
     program::invoke_signed,
@@ -16,12 +15,12 @@ use solana_program::{
 
 use crate::{
     instruction::ProductInstruction,
-    state::{ProductAccountState, ProductPrice, ProductPriceCounter},
+    state::{ProductAccountState, ProductCounter, ProductPrice, ProductPriceCounter},
 };
 
-pub fn process_instruction(
+pub fn process_instruction<'a>(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &'a [AccountInfo<'a>],
     instruction_data: &[u8],
 ) -> ProgramResult {
     let instruction = ProductInstruction::unpack(instruction_data)?;
@@ -30,9 +29,8 @@ pub fn process_instruction(
         ProductInstruction::AddProduct {
             name,
             price,
-            id,
             timestamp,
-        } => add_product(program_id, accounts, id, name, price, timestamp),
+        } => add_product(program_id, accounts, name, price, timestamp),
         ProductInstruction::UpdateProduct { name } => update_product(program_id, accounts, name),
         ProductInstruction::UpdatePrice { price, timestamp } => {
             add_price(program_id, accounts, price, timestamp)
@@ -40,16 +38,14 @@ pub fn process_instruction(
     }
 }
 
-pub fn add_product(
+pub fn add_product<'a>(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    id: u64,
+    accounts: &'a [AccountInfo<'a>],
     name: String,
     price: f64,
     timestamp: String,
 ) -> ProgramResult {
     msg!("Adding product...");
-    msg!("Id: {}", id);
     msg!("Name: {}", name);
     msg!("Price: {:.2}", price);
     msg!("Timestamp: {}", timestamp);
@@ -57,7 +53,8 @@ pub fn add_product(
     let account_info_iter = &mut accounts.iter();
     let initializer = next_account_info(account_info_iter)?;
     let pda_product = next_account_info(account_info_iter)?;
-    let pda_counter = next_account_info(account_info_iter)?;
+    let pda_product_counter = next_account_info(account_info_iter)?;
+    let pda_price_counter = next_account_info(account_info_iter)?;
     let _pda_price = next_account_info(account_info_iter)?;
     let system_program = next_account_info(account_info_iter)?;
 
@@ -65,6 +62,9 @@ pub fn add_product(
         msg!("Missing required signature");
         return Err(ProgramError::MissingRequiredSignature);
     }
+
+    let id = generate_product_id(initializer, program_id, pda_product_counter, system_program)?;
+    msg!("Id: {}", id);
 
     let (pda, bump_seed) = Pubkey::find_program_address(
         &[initializer.key.as_ref(), id.to_be_bytes().as_ref()],
@@ -143,7 +143,7 @@ pub fn add_product(
     let (counter, counter_bump) =
         Pubkey::find_program_address(&[pda.as_ref(), "price".as_ref()], program_id);
 
-    if counter != *pda_counter.key {
+    if counter != *pda_price_counter.key {
         msg!("Invalid seeds for Counter PDA");
         return Err(ProgramError::InvalidArgument);
     }
@@ -151,14 +151,14 @@ pub fn add_product(
     invoke_signed(
         &system_instruction::create_account(
             initializer.key,
-            pda_counter.key,
+            pda_price_counter.key,
             counter_rent_lamports,
             ProductPriceCounter::SIZE.try_into().unwrap(),
             program_id,
         ),
         &[
             initializer.clone(),
-            pda_counter.clone(),
+            pda_price_counter.clone(),
             system_program.clone(),
         ],
         &[&[pda.as_ref(), "price".as_ref(), &[counter_bump]]],
@@ -166,7 +166,7 @@ pub fn add_product(
     msg!("Price Counter created");
 
     let mut counter_data =
-        try_from_slice_unchecked::<ProductPriceCounter>(&pda_counter.data.borrow()).unwrap();
+        try_from_slice_unchecked::<ProductPriceCounter>(&pda_price_counter.data.borrow()).unwrap();
 
     msg!("Checking if Price Counter account is already initialized");
     if counter_data.is_initialized {
@@ -179,7 +179,7 @@ pub fn add_product(
     counter_data.is_initialized = true;
 
     msg!("Price count: {}", counter_data.counter);
-    counter_data.serialize(&mut &mut pda_counter.data.borrow_mut()[..])?;
+    counter_data.serialize(&mut &mut pda_price_counter.data.borrow_mut()[..])?;
 
     // Adding price
     add_price(program_id, accounts, price, timestamp)?;
@@ -269,12 +269,13 @@ pub fn add_price(
 
     let product_owner = next_account_info(account_info_inter)?;
     let pda_product = next_account_info(account_info_inter)?;
-    let pda_counter = next_account_info(account_info_inter)?;
+    let _pda_product_counter = next_account_info(account_info_inter)?;
+    let pda_price_counter = next_account_info(account_info_inter)?;
     let pda_price = next_account_info(account_info_inter)?;
     let system_program = next_account_info(account_info_inter)?;
 
     let mut counter_data =
-        try_from_slice_unchecked::<ProductPriceCounter>(&pda_counter.data.borrow()).unwrap();
+        try_from_slice_unchecked::<ProductPriceCounter>(&pda_price_counter.data.borrow()).unwrap();
 
     let account_len = ProductPrice::get_account_size(timestamp.clone());
 
@@ -335,7 +336,7 @@ pub fn add_price(
 
     msg!("Price count: {}", counter_data.counter);
     counter_data.counter += 1;
-    counter_data.serialize(&mut &mut pda_counter.data.borrow_mut()[..])?;
+    counter_data.serialize(&mut &mut pda_price_counter.data.borrow_mut()[..])?;
 
     msg!("Updating price in the Product Account");
     msg!("Unpacking state account");
@@ -381,4 +382,72 @@ pub fn add_price(
     msg!("State account serialized");
 
     Ok(())
+}
+
+fn generate_product_id<'a>(
+    initializer: &'a AccountInfo<'a>,
+    program_id: &Pubkey,
+    pda_product_counter: &AccountInfo<'a>,
+    system_program: &AccountInfo<'a>,
+) -> Result<u64, ProgramError> {
+    let (product_counter, bump) = Pubkey::find_program_address(
+        &[
+            initializer.key.as_ref(),
+            ProductCounter::DISCRIMINATOR.as_ref(),
+        ],
+        program_id,
+    );
+
+    if product_counter != *pda_product_counter.key {
+        msg!("Invalid seeds for PDA");
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    msg!("Data {}", &pda_product_counter.data_len());
+
+    if pda_product_counter.data_len() == 0 {
+        msg!("Creating Product Counter");
+        let rent = Rent::get()?;
+        let counter_rent_lamports = rent.minimum_balance(ProductCounter::SIZE);
+
+        invoke_signed(
+            &system_instruction::create_account(
+                initializer.key,
+                pda_product_counter.key,
+                counter_rent_lamports,
+                ProductCounter::SIZE.try_into().unwrap(),
+                program_id,
+            ),
+            &[
+                initializer.clone(),
+                pda_product_counter.clone(),
+                system_program.clone(),
+            ],
+            &[&[
+                initializer.key.as_ref(),
+                ProductCounter::DISCRIMINATOR.as_ref(),
+                &[bump],
+            ]],
+        )?;
+
+        msg!("Product Counter created");
+    }
+
+    let mut counter_data =
+        try_from_slice_unchecked::<ProductCounter>(&pda_product_counter.data.borrow()).unwrap();
+
+    msg!("Checking if Product Counter account is already initialized");
+    if counter_data.is_initialized {
+        msg!("Account already initialized");
+        counter_data.counter += 1;
+    } else {
+        counter_data.discriminator = ProductPriceCounter::DISCRIMINATOR.to_string();
+        counter_data.counter = 1;
+        counter_data.is_initialized = true;
+    }
+
+    msg!("Product count: {}", counter_data.counter);
+    counter_data.serialize(&mut &mut pda_product_counter.data.borrow_mut()[..])?;
+
+    Ok(counter_data.counter)
 }

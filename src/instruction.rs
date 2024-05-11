@@ -3,7 +3,6 @@ use solana_program::program_error::ProgramError;
 
 pub enum ProductInstruction {
     AddProduct {
-        id: u64,
         name: String,
         price: f64,
         timestamp: String,
@@ -19,7 +18,6 @@ pub enum ProductInstruction {
 
 #[derive(BorshDeserialize)]
 struct AddProductPayload {
-    id: u64,
     name: String,
     price: f64,
     timestamp: String,
@@ -46,7 +44,6 @@ impl ProductInstruction {
             0 => {
                 let payload = AddProductPayload::try_from_slice(rest).unwrap();
                 Self::AddProduct {
-                    id: payload.id,
                     name: payload.name,
                     price: payload.price,
                     timestamp: payload.timestamp,
